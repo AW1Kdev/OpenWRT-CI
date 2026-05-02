@@ -201,8 +201,6 @@ jobs:
       - name: Show Build Output Device
         run: |
           cd ./wrt/
-
-          echo "================ FINAL BUILD OUTPUT INFO ================"
           echo "Build Device : $BUILD_DEVICE"
           echo "WRT Target   : $WRT_TARGET"
           echo ""
@@ -213,8 +211,7 @@ jobs:
           echo ""
           echo "Firmware files:"
           find ./bin/targets/ -type f 2>/dev/null || true
-          echo "========================================================="
-
+          
       - name: Machine Information
         run: |
           cd ./wrt/
