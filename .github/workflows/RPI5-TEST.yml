@@ -15,7 +15,7 @@ on:
         required: true
         type: choice
         options:
-          - immortalwrt/immortalwrt
+          - AW1Kdev/DOTYPI5
       BRANCH:
         default: 'main'
         required: true
