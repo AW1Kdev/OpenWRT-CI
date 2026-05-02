@@ -1,8 +1,4 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2026 VIKINGYFY
-
-# Cloud build shared core
-name: WRT-CORE
+name: RPI5-CORE
 
 on:
   workflow_call:
@@ -10,22 +6,7 @@ on:
       WRT_CONFIG:
         required: true
         type: string
-      WRT_THEME:
-        required: true
-        type: string
-      WRT_NAME:
-        required: true
-        type: string
-      WRT_SSID:
-        required: true
-        type: string
-      WRT_WORD:
-        required: true
-        type: string
       WRT_IP:
-        required: true
-        type: string
-      WRT_PW:
         required: true
         type: string
       WRT_REPO:
@@ -40,24 +21,19 @@ on:
       WRT_PACKAGE:
         required: false
         type: string
-      WRT_TEST:
+      RPI5_TEST:
         required: false
         type: string
 
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
-  WRT_THEME: ${{inputs.WRT_THEME}}
-  WRT_NAME: ${{inputs.WRT_NAME}}
-  WRT_SSID: ${{inputs.WRT_SSID}}
-  WRT_WORD: ${{inputs.WRT_WORD}}
   WRT_IP: ${{inputs.WRT_IP}}
-  WRT_PW: ${{inputs.WRT_PW}}
   WRT_REPO: ${{inputs.WRT_REPO}}
   WRT_BRANCH: ${{inputs.WRT_BRANCH}}
   WRT_SOURCE: ${{inputs.WRT_SOURCE}}
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
-  WRT_TEST: ${{inputs.WRT_TEST}}
+  RPI5_TEST: ${{inputs.RPI5_TEST}}
 
 jobs:
   core:
@@ -67,7 +43,7 @@ jobs:
       - name: Checkout Projects
         uses: actions/checkout@main
 
-      - name: Initialization Environment
+      - name: Initialize Environment
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -86,7 +62,7 @@ jobs:
           sudo chown $USER:$USER /mnt/build_wrt
           sudo ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt
 
-      - name: Initialization Values
+      - name: Initialize Values
         run: |
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
           echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
@@ -96,25 +72,25 @@ jobs:
           echo "WRT_KVER=none" >> $GITHUB_ENV
           echo "WRT_LIST=none" >> $GITHUB_ENV
 
-      - name: Clone Code
+      - name: Clone Source Code
         run: |
           git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
 
           cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
-          # GitHub Action: remove China mirrors
+          # Remove China mirrors for GitHub Actions
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
           if [ -f "$PROJECT_MIRRORS_FILE" ]; then
             sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
           fi
 
-      - name: Check Scripts
+      - name: Normalize Scripts
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
 
-      - name: Check Caches
+      - name: Check Cache
         id: check-cache
-        if: env.WRT_TEST != 'true'
+        if: env.RPI5_TEST != 'true'
         uses: actions/cache@main
         with:
           key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
@@ -124,8 +100,8 @@ jobs:
             ./wrt/staging_dir/host*
             ./wrt/staging_dir/tool*
 
-      - name: Update Caches
-        if: env.WRT_TEST != 'true'
+      - name: Update Cache
+        if: env.RPI5_TEST != 'true'
         run: |
           if [ -d "./wrt/staging_dir" ]; then
             find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r DIR; do
@@ -136,7 +112,7 @@ jobs:
 
             echo "toolchain skipped done!"
           else
-            echo "caches missed!"
+            echo "cache missed!"
           fi
 
           if ${{steps.check-cache.outputs.cache-hit != 'true'}}; then
@@ -145,20 +121,18 @@ jobs:
               gh cache delete $CACHE_KEY
             done
 
-            echo "caches cleanup done!"
+            echo "cache cleanup done!"
           fi
 
       - name: Update Feeds
         run: |
           cd ./wrt/
-
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Custom Packages
         run: |
           cd ./wrt/package/
-
           $GITHUB_WORKSPACE/Scripts/Packages.sh
           $GITHUB_WORKSPACE/Scripts/Handles.sh
 
@@ -177,13 +151,13 @@ jobs:
           make defconfig -j$(nproc) && make clean -j$(nproc)
 
       - name: Download Packages
-        if: env.WRT_TEST != 'true'
+        if: env.RPI5_TEST != 'true'
         run: |
           cd ./wrt/
           make download -j$(nproc)
 
       - name: Compile Firmware
-        if: env.WRT_TEST != 'true'
+        if: env.RPI5_TEST != 'true'
         run: |
           cd ./wrt/
           make -j$(nproc) || make -j1 V=s
@@ -191,7 +165,6 @@ jobs:
       - name: Machine Information
         run: |
           cd ./wrt/
-
           echo "======================="
           lscpu | grep -E "name|Core|Thread"
           echo "======================="
@@ -206,7 +179,7 @@ jobs:
 
           cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE".txt
 
-          if [[ $WRT_TEST != 'true' ]]; then
+          if [[ $RPI5_TEST != 'true' ]]; then
             echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
             echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
 
@@ -230,24 +203,17 @@ jobs:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
           files: ./wrt/upload/*.*
           body: |
-            This is a platform firmware package containing multiple devices!
-            Please select the firmware suitable for your device!
+            This is a multi-device firmware package.
+            Please make sure to choose the correct firmware for your device!
             Don’t ask, just flash it!
 
-            All builds include open-source hardware acceleration!
+            All builds include open-source hardware acceleration.
 
             Source: ${{env.WRT_REPO}}
             Branch: ${{env.WRT_BRANCH}}
             Commit: ${{env.WRT_HASH}}
-
             Config: ${{env.WRT_CONFIG}}
-            Target: ${{env.WRT_TARGET}}
-
+            Platform: ${{env.WRT_TARGET}}
             Login IP: ${{env.WRT_IP}}
-            Login Password: ${{env.WRT_PW}}
-
-            WiFi Name: ${{env.WRT_SSID}}
-            WiFi Password: ${{env.WRT_WORD}}
-
             Kernel Version: ${{env.WRT_KVER}}
-            Plugin List: ${{env.WRT_LIST}}
+        
