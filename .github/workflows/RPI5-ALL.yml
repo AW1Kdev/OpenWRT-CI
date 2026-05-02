@@ -5,12 +5,9 @@ on:
     workflows: ["Auto-Clean"]
     types:
       - completed
+
   workflow_dispatch:
     inputs:
-      PACKAGE:
-        description: 'Manually adjust plugin packages, separate multiple entries with \n.'
-        required: false
-        type: string
       TEST:
         description: 'Only output config file, do not compile firmware.'
         default: 'false'
@@ -37,5 +34,4 @@ jobs:
       WRT_REPO: https://github.com/${{matrix.SOURCE}}.git
       WRT_BRANCH: ${{matrix.BRANCH}}
       WRT_SOURCE: ${{matrix.SOURCE}}
-      WRT_PACKAGE: ${{inputs.PACKAGE}}
       WRT_TEST: ${{inputs.TEST}}
