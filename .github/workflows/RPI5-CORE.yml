@@ -75,6 +75,7 @@ jobs:
           echo "WRT_WIFI=wifi-yes" >> $GITHUB_ENV
           echo "WRT_KVER=none" >> $GITHUB_ENV
           echo "WRT_LIST=none" >> $GITHUB_ENV
+          echo "BUILD_DEVICE=unknown" >> $GITHUB_ENV
 
       - name: Clone Source Code
         run: |
@@ -150,9 +151,46 @@ jobs:
 
           make defconfig -j$(nproc)
 
-          echo "===== TARGET CHECK ====="
-          grep -E "CONFIG_TARGET_(x86|bcm27xx)|DEVICE_rpi" .config || true
-          echo "========================"
+      - name: Pre-Build Device Check
+        run: |
+          cd ./wrt/
+
+          echo "================ PRE-BUILD DEVICE CHECK ================"
+
+          TARGET_BOARD="$(grep -oP '^CONFIG_TARGET_BOARD="\K[^"]+' .config || true)"
+          TARGET_SUBTARGET="$(grep -oP '^CONFIG_TARGET_SUBTARGET="\K[^"]+' .config || true)"
+          TARGET_PROFILE="$(grep -oP '^CONFIG_TARGET_PROFILE="\K[^"]+' .config || true)"
+
+          echo "Selected Config : $WRT_CONFIG"
+          echo "Login IP        : $WRT_IP"
+          echo "Target Board    : $TARGET_BOARD"
+          echo "Target Subtarget: $TARGET_SUBTARGET"
+          echo "Target Profile  : $TARGET_PROFILE"
+          echo "Build Device    : ${TARGET_BOARD}/${TARGET_SUBTARGET}/${TARGET_PROFILE}"
+          echo ""
+
+          echo "Target Flags:"
+          grep -E '^CONFIG_TARGET_(x86|bcm27xx|qualcommax|mediatek|rockchip)' .config || true
+          echo ""
+
+          echo "Raspberry Pi Device:"
+          grep -E 'DEVICE_rpi|DEVICE_bcm27xx' .config || true
+          echo ""
+
+          echo "BUILD_DEVICE=${TARGET_BOARD}/${TARGET_SUBTARGET}/${TARGET_PROFILE}" >> $GITHUB_ENV
+
+          if grep -q '^CONFIG_TARGET_x86=y' .config; then
+            echo "ERROR: Wrong target detected! This build is x86, not Raspberry Pi 5."
+            exit 1
+          fi
+
+          if ! grep -q '^CONFIG_TARGET_bcm27xx_bcm2712_DEVICE_rpi-5=y' .config; then
+            echo "ERROR: Raspberry Pi 5 target not detected!"
+            exit 1
+          fi
+
+          echo "OK: Correct target detected: Raspberry Pi 5"
+          echo "========================================================"
 
       - name: Download Packages
         if: env.RPI5_TEST != 'true'
@@ -165,6 +203,23 @@ jobs:
         run: |
           cd ./wrt/
           make -j$(nproc) || make -j1 V=s
+
+      - name: Show Build Output Device
+        run: |
+          cd ./wrt/
+
+          echo "================ FINAL BUILD OUTPUT INFO ================"
+          echo "Build Device : $BUILD_DEVICE"
+          echo "WRT Target   : $WRT_TARGET"
+          echo ""
+
+          echo "Output folders:"
+          find ./bin/targets/ -maxdepth 3 -type d 2>/dev/null || true
+
+          echo ""
+          echo "Firmware files:"
+          find ./bin/targets/ -type f 2>/dev/null || true
+          echo "========================================================="
 
       - name: Machine Information
         run: |
@@ -232,5 +287,6 @@ jobs:
             Commit: ${{ env.WRT_HASH }}
             Config: ${{ env.WRT_CONFIG }}
             Platform: ${{ env.WRT_TARGET }}
+            Build Device: ${{ env.BUILD_DEVICE }}
             Login IP: ${{ env.WRT_IP }}
             Kernel Version: ${{ env.WRT_KVER }}
