@@ -1,0 +1,45 @@
+name: RPI5-TEST
+
+on:
+  workflow_dispatch:
+    inputs:
+      CONFIG:
+        default: 'RPI5-WIFI-YES'
+        required: true
+        type: choice
+        options:
+          - RPI5M
+          - RPI5
+      SOURCE:
+        default: 'AW1Kdev/DOTYPI5'
+        required: true
+        type: choice
+        options:
+          - immortalwrt/immortalwrt
+      BRANCH:
+        default: 'main'
+        required: true
+        type: string
+      PACKAGE:
+        required: false
+        type: string
+      TEST:
+        description: 'Only output config file, do not compile firmware.'
+        default: 'true'
+        required: true
+        type: boolean
+
+permissions: write-all
+
+jobs:
+  config:
+    name: ${{inputs.CONFIG}}
+    uses: ./.github/workflows/RPI5-CORE.yml
+    with:
+      WRT_CONFIG: ${{inputs.CONFIG}}
+      WRT_IP: 10.10.1.1
+      WRT_REPO: https://github.com/${{inputs.SOURCE}}.git
+      WRT_BRANCH: ${{inputs.BRANCH}}
+      WRT_SOURCE: ${{inputs.SOURCE}}
+      WRT_PACKAGE: ${{inputs.PACKAGE}}
+      WRT_TEST: ${{inputs.TEST}}
