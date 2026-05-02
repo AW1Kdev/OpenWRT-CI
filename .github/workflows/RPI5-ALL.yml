@@ -22,7 +22,7 @@ on:
 
       TEST:
         description: 'Only output config file, do not compile firmware.'
-        default: 'false'
+        default: false
         required: false
         type: boolean
 
@@ -30,7 +30,7 @@ permissions: write-all
 
 jobs:
   config:
-    name: ${{matrix.CONFIG}}
+    name: ${{ matrix.CONFIG }}
     strategy:
       fail-fast: false
       matrix:
@@ -40,8 +40,9 @@ jobs:
 
     uses: ./.github/workflows/RPI5-CORE.yml
     with:
-      WRT_CONFIG: ${{matrix.CONFIG}}
-      WRT_IP: ${{inputs.WRT_IP}}
-      WRT_REPO: https://github.com/${{matrix.SOURCE}}.git
-      WRT_BRANCH: ${{matrix.BRANCH}}
-      WRT_SOURCE: ${{matrix.SOURCE}}
+      WRT_CONFIG: ${{ matrix.CONFIG }}
+      WRT_IP: ${{ inputs.WRT_IP || '10.10.1.1' }}
+      WRT_REPO: https://github.com/${{ matrix.SOURCE }}.git
+      WRT_BRANCH: ${{ matrix.BRANCH }}
+      WRT_SOURCE: ${{ matrix.SOURCE }}
+      RPI5_TEST: ${{ inputs.TEST || false }}
