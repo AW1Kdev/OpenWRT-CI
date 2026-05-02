@@ -154,9 +154,6 @@ jobs:
       - name: Pre-Build Device Check
         run: |
           cd ./wrt/
-
-          echo "================ PRE-BUILD DEVICE CHECK ================"
-
           TARGET_BOARD="$(grep -oP '^CONFIG_TARGET_BOARD="\K[^"]+' .config || true)"
           TARGET_SUBTARGET="$(grep -oP '^CONFIG_TARGET_SUBTARGET="\K[^"]+' .config || true)"
           TARGET_PROFILE="$(grep -oP '^CONFIG_TARGET_PROFILE="\K[^"]+' .config || true)"
@@ -188,9 +185,6 @@ jobs:
             echo "ERROR: Raspberry Pi 5 target not detected!"
             exit 1
           fi
-
-          echo "OK: Correct target detected: Raspberry Pi 5"
-          echo "========================================================"
 
       - name: Download Packages
         if: env.RPI5_TEST != 'true'
