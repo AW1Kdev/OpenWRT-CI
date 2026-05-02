@@ -8,6 +8,18 @@ on:
 
   workflow_dispatch:
     inputs:
+      WRT_IP:
+        description: 'Select LAN IP address'
+        required: true
+        type: choice
+        default: '10.10.1.1'
+        options:
+          - 192.168.1.1
+          - 192.168.10.1
+          - 10.0.0.1
+          - 10.10.1.1
+          - 10.99.1.1
+
       TEST:
         description: 'Only output config file, do not compile firmware.'
         default: 'false'
@@ -21,7 +33,6 @@ jobs:
     name: ${{matrix.CONFIG}}
     strategy:
       fail-fast: false
-      # max-parallel: 3
       matrix:
         CONFIG: [RPI5M, RPI5]
         SOURCE: [AW1Kdev/DOTYPI5]
@@ -30,7 +41,7 @@ jobs:
     uses: ./.github/workflows/RPI5-CORE.yml
     with:
       WRT_CONFIG: ${{matrix.CONFIG}}
-      WRT_IP: 192.168.10.1
+      WRT_IP: ${{inputs.WRT_IP}}
       WRT_REPO: https://github.com/${{matrix.SOURCE}}.git
       WRT_BRANCH: ${{matrix.BRANCH}}
       WRT_SOURCE: ${{matrix.SOURCE}}
