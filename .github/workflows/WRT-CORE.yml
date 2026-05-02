@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 VIKINGYFY
 
-#云编译公用核心
+# Cloud build shared core
 name: WRT-CORE
 
 on:
@@ -102,7 +102,7 @@ jobs:
 
           cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
-          # GitHub Action 移除国内下载源
+          # GitHub Action: remove China mirrors
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
           if [ -f "$PROJECT_MIRRORS_FILE" ]; then
             sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
@@ -134,7 +134,7 @@ jobs:
 
             mkdir -p ./wrt/tmp && echo "1" > ./wrt/tmp/.build
 
-            echo "toolchain skiped done!"
+            echo "toolchain skipped done!"
           else
             echo "caches missed!"
           fi
@@ -180,14 +180,12 @@ jobs:
         if: env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
-
           make download -j$(nproc)
 
       - name: Compile Firmware
         if: env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
-
           make -j$(nproc) || make -j1 V=s
 
       - name: Machine Information
@@ -232,24 +230,24 @@ jobs:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
           files: ./wrt/upload/*.*
           body: |
-            这是个平台固件包，内含多个设备！
-            请注意选择你需要的设备固件！
-            不要问，刷就完事了！
+            This is a platform firmware package containing multiple devices!
+            Please select the firmware suitable for your device!
+            Don’t ask, just flash it!
 
-            全系带开源硬件加速，别问了！
+            All builds include open-source hardware acceleration!
 
-            源码：${{env.WRT_REPO}}
-            分支：${{env.WRT_BRANCH}}
-            提交：${{env.WRT_HASH}}
+            Source: ${{env.WRT_REPO}}
+            Branch: ${{env.WRT_BRANCH}}
+            Commit: ${{env.WRT_HASH}}
 
-            配置：${{env.WRT_CONFIG}}
-            平台：${{env.WRT_TARGET}}
+            Config: ${{env.WRT_CONFIG}}
+            Target: ${{env.WRT_TARGET}}
 
-            登录地址：${{env.WRT_IP}}
-            登录密码：${{env.WRT_PW}}
+            Login IP: ${{env.WRT_IP}}
+            Login Password: ${{env.WRT_PW}}
 
-            WIFI名称：${{env.WRT_SSID}}
-            WIFI密码：${{env.WRT_WORD}}
+            WiFi Name: ${{env.WRT_SSID}}
+            WiFi Password: ${{env.WRT_WORD}}
 
-            内核版本：${{env.WRT_KVER}}
-            插件列表：${{env.WRT_LIST}}
+            Kernel Version: ${{env.WRT_KVER}}
+            Plugin List: ${{env.WRT_LIST}}
