@@ -41,10 +41,10 @@ jobs:
         run: |
           cd wrt
 
-          if [ -f configs/RPI5M.config ]; then
-            cp configs/RPI5M.config .config
-          elif [ -f RPI5M.config ]; then
-            cp RPI5M.config .config
+          if [ -f configs/RPI5M.txt ]; then
+            cp configs/RPI5M.txt .config
+          elif [ -f RPI5M.txt ]; then
+            cp RPI5M.txt .config
           fi
 
           make defconfig
