@@ -266,7 +266,7 @@ jobs:
             make clean -j$(nproc)
           fi
 
-      - name: Upload FULL BIN Artifact
+      - name: Upload To Artifact
         if: env.RPI5_TEST != 'true'
         uses: actions/upload-artifact@v4
         with:
