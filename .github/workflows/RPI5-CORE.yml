@@ -60,16 +60,35 @@ jobs:
           sudo -E apt -yqq autoremove --purge
           sudo -E apt -yqq autoclean
           sudo -E apt -yqq clean
-          sudo -E apt -yqq install dos2unix libfuse-dev
+
+          sudo -E apt -yqq install \
+            dos2unix libfuse-dev \
+            build-essential clang llvm lld cmake ninja-build \
+            python3 python3-pip git curl wget unzip rsync file \
+            libssl-dev pkg-config zlib1g-dev
 
           sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
 
           sudo -E systemctl daemon-reload
           sudo -E timedatectl set-timezone "Asia/Kuala_Lumpur"
 
-          sudo mkdir -p /mnt/build_wrt
-          sudo chown $USER:$USER /mnt/build_wrt
-          sudo ln -sf /mnt/build_wrt $GITHUB_WORKSPACE/wrt
+      - name: Free Disk And Add Swap
+        if: env.RPI5_TEST != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          docker system prune -af || true
+
+          sudo swapoff -a || true
+          sudo fallocate -l 16G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=16384
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
+          free -h
+          df -h
 
       - name: Initialize Values
         run: |
@@ -116,37 +135,11 @@ jobs:
         if: env.RPI5_TEST != 'true'
         uses: actions/cache@v4
         with:
-          key: ${{ env.WRT_CONFIG }}-${{ env.WRT_INFO }}-${{ env.WRT_HASH }}
+          key: ccache-${{ env.WRT_CONFIG }}-${{ env.WRT_INFO }}-${{ env.WRT_HASH }}
           restore-keys: |
-            ${{ env.WRT_CONFIG }}-${{ env.WRT_INFO }}
+            ccache-${{ env.WRT_CONFIG }}-${{ env.WRT_INFO }}
           path: |
             ./wrt/.ccache
-            ./wrt/staging_dir/host*
-            ./wrt/staging_dir/tool*
-
-      - name: Update Cache
-        if: env.RPI5_TEST != 'true'
-        run: |
-          if [ -d "./wrt/staging_dir" ]; then
-            find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r DIR; do
-              find "$DIR" -type f -exec touch {} +
-            done
-
-            mkdir -p ./wrt/tmp
-            echo "1" > ./wrt/tmp/.build
-            echo "toolchain skipped done!"
-          else
-            echo "cache missed!"
-          fi
-
-          if [[ "${{ steps.check-cache.outputs.cache-hit }}" != "true" ]]; then
-            CACHE_LIST=$(gh cache list --key "$WRT_CONFIG-$WRT_INFO" | cut -f 1)
-            for CACHE_KEY in $CACHE_LIST; do
-              gh cache delete "$CACHE_KEY" || true
-            done
-
-            echo "cache cleanup done!"
-          fi
 
       - name: Update Feeds
         run: |
@@ -210,11 +203,20 @@ jobs:
           cd ./wrt/
           make download -j$(nproc)
 
+      - name: Clean Rust Host
+        if: env.RPI5_TEST != 'true'
+        run: |
+          cd ./wrt/
+          rm -rf dl/cargo
+          rm -rf build_dir/target-*/host/rustc-*-src
+          rm -rf staging_dir/hostpkg/lib/rustlib
+          make package/feeds/packages/rust/host/clean V=s || true
+
       - name: Compile Firmware
         if: env.RPI5_TEST != 'true'
         run: |
           cd ./wrt/
-          make -j$(nproc) || make -j1 V=s
+          make -j2 || make -j1 V=s
 
       - name: Show Build Output Device
         run: |
@@ -235,6 +237,8 @@ jobs:
           cd ./wrt/
           echo "======================="
           lscpu | grep -E "name|Core|Thread" || true
+          echo "======================="
+          free -h
           echo "======================="
           df -h
           echo "======================="
