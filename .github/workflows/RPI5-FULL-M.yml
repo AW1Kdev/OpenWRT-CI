@@ -1,0 +1,51 @@
+name: RPI5-FULL-M
+
+on:
+  workflow_run:
+    workflows: ["Auto-Clean"]
+    types:
+      - completed
+
+  workflow_dispatch:
+    inputs:
+      WRT_IP:
+        description: 'Select LAN IP address'
+        required: true
+        type: choice
+        default: '10.10.1.1'
+        options:
+          - 192.168.1.1
+          - 192.168.10.1
+          - 10.0.0.1
+          - 10.10.1.1
+          - 10.99.1.1
+
+      TEST:
+        description: 'Only output config file, do not compile firmware.'
+        default: false
+        required: false
+        type: boolean
+
+permissions: write-all
+
+jobs:
+  config:
+    name: ${{ matrix.CONFIG }}
+    strategy:
+      fail-fast: false
+      matrix:
+        CONFIG: [RPI5M]
+        SOURCE: [AW1Kdev/DOTYPI5]
+        BRANCH: [main]
+
+    uses: ./.github/workflows/RPI5-CORE.yml
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}
+    with:
+      WRT_CONFIG: ${{ matrix.CONFIG }}
+      WRT_IP: ${{ inputs.WRT_IP }}
+      WRT_REPO: https://github.com/${{ matrix.SOURCE }}.git
+      WRT_BRANCH: ${{ matrix.BRANCH }}
+      WRT_SOURCE: ${{ matrix.SOURCE }}
+      WRT_PACKAGE: ''
+      RPI5_TEST: ${{ inputs.TEST }}
