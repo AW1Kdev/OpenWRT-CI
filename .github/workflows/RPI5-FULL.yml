@@ -1,4 +1,4 @@
-name: RPI5-ALL
+name: RPI5-FULL
 
 on:
   workflow_run:
@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        CONFIG: [FULL-RPI5, LITE-RPI5]
+        CONFIG: [FULL-RPI5]
         SOURCE: [AW1Kdev/DOTYPI5]
         BRANCH: [main]
 
