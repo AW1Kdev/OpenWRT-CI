@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        CONFIG: [RPI5M]
+        CONFIG: [FULL-RPI5, LITE-RPI5]
         SOURCE: [AW1Kdev/DOTYPI5]
         BRANCH: [main]
 
