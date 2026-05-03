@@ -45,6 +45,19 @@ jobs:
       - name: Checkout Projects
         uses: actions/checkout@v4
 
+      - name: Setup SSH Key For Private Repo
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+
       - name: Initialize Environment
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -79,6 +92,11 @@ jobs:
 
       - name: Clone Source Code
         run: |
+          rm -rf ./wrt
+
+          echo "Testing SSH access..."
+          ssh -T git@github.com || true
+
           git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" ./wrt/
 
           cd ./wrt/
@@ -211,7 +229,7 @@ jobs:
           echo ""
           echo "Firmware files:"
           find ./bin/targets/ -type f 2>/dev/null || true
-          
+
       - name: Machine Information
         run: |
           cd ./wrt/
