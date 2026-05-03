@@ -1,48 +1,298 @@
-name: RPI5-ALL
+name: RPI5-CORE
 
 on:
-  workflow_run:
-    workflows: ["Auto-Clean"]
-    types:
-      - completed
-
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      WRT_IP:
-        description: 'Select LAN IP address'
+      WRT_CONFIG:
         required: true
-        type: choice
-        default: '10.10.1.1'
-        options:
-          - 192.168.1.1
-          - 192.168.10.1
-          - 10.0.0.1
-          - 10.10.1.1
-          - 10.99.1.1
-
-      TEST:
-        description: 'Only output config file, do not compile firmware.'
-        default: false
+        type: string
+      WRT_IP:
+        required: true
+        type: string
+      WRT_REPO:
+        required: true
+        type: string
+      WRT_BRANCH:
+        required: true
+        type: string
+      WRT_SOURCE:
+        required: true
+        type: string
+      WRT_PACKAGE:
+        required: false
+        type: string
+      RPI5_TEST:
         required: false
         type: boolean
+        default: false
 
-permissions: write-all
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_PAT: ${{ secrets.GH_PAT }}
+  WRT_CONFIG: ${{ inputs.WRT_CONFIG }}
+  WRT_IP: ${{ inputs.WRT_IP }}
+  WRT_REPO: ${{ inputs.WRT_REPO }}
+  WRT_BRANCH: ${{ inputs.WRT_BRANCH }}
+  WRT_SOURCE: ${{ inputs.WRT_SOURCE }}
+  WRT_PACKAGE: ${{ inputs.WRT_PACKAGE }}
+  RPI5_TEST: ${{ inputs.RPI5_TEST }}
 
 jobs:
-  config:
-    name: ${{ matrix.CONFIG }}
-    strategy:
-      fail-fast: false
-      matrix:
-        CONFIG: [RPI5M, RPI5]
-        SOURCE: [AW1Kdev/DOTYPI5]
-        BRANCH: [main]
+  core:
+    name: ${{ inputs.WRT_SOURCE }}
+    runs-on: ubuntu-latest
 
-    uses: ./.github/workflows/RPI5-CORE.yml
-    with:
-      WRT_CONFIG: ${{ matrix.CONFIG }}
-      WRT_IP: ${{ inputs.WRT_IP || '10.10.1.1' }}
-      WRT_REPO: https://github.com/${{ matrix.SOURCE }}.git
-      WRT_BRANCH: ${{ matrix.BRANCH }}
-      WRT_SOURCE: ${{ matrix.SOURCE }}
-      RPI5_TEST: ${{ inputs.TEST || false }}
+    steps:
+      - name: Checkout Projects
+        uses: actions/checkout@v4
+
+      - name: Initialize Environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt -yqq purge firefox || true
+          sudo -E apt -yqq update
+          sudo -E apt -yqq full-upgrade
+          sudo -E apt -yqq autoremove --purge
+          sudo -E apt -yqq autoclean
+          sudo -E apt -yqq clean
+          sudo -E apt -yqq install dos2unix libfuse-dev
+
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+
+          sudo -E systemctl daemon-reload
+          sudo -E timedatectl set-timezone "Asia/Kuala_Lumpur"
+
+          sudo mkdir -p /mnt/build_wrt
+          sudo chown $USER:$USER /mnt/build_wrt
+          sudo ln -sf /mnt/build_wrt $GITHUB_WORKSPACE/wrt
+
+      - name: Initialize Values
+        run: |
+          echo "WRT_DATE=$(TZ=Asia/Kuala_Lumpur date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
+          echo "WRT_INFO=${WRT_SOURCE%%/*}" >> $GITHUB_ENV
+          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
+          echo "WRT_WIFI=wifi-yes" >> $GITHUB_ENV
+          echo "WRT_KVER=none" >> $GITHUB_ENV
+          echo "WRT_LIST=none" >> $GITHUB_ENV
+          echo "BUILD_DEVICE=unknown" >> $GITHUB_ENV
+
+      - name: Clone Source Code
+        run: |
+          rm -rf ./wrt
+
+          if [ -z "$GH_PAT" ]; then
+            echo "ERROR: GH_PAT secret is empty or not set."
+            exit 1
+          fi
+
+          CLEAN_REPO="${WRT_REPO#https://github.com/}"
+          CLEAN_REPO="${CLEAN_REPO#http://github.com/}"
+          CLEAN_REPO="${CLEAN_REPO#github.com/}"
+
+          REPO_URL="https://x-access-token:${GH_PAT}@github.com/${CLEAN_REPO}"
+
+          echo "Cloning private repo..."
+          git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$REPO_URL" ./wrt/
+
+          cd ./wrt/
+          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+
+          PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
+          if [ -f "$PROJECT_MIRRORS_FILE" ]; then
+            sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
+          fi
+
+      - name: Normalize Scripts
+        run: |
+          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
+
+      - name: Check Cache
+        id: check-cache
+        if: env.RPI5_TEST != 'true'
+        uses: actions/cache@v4
+        with:
+          key: ${{ env.WRT_CONFIG }}-${{ env.WRT_INFO }}-${{ env.WRT_HASH }}
+          restore-keys: |
+            ${{ env.WRT_CONFIG }}-${{ env.WRT_INFO }}
+          path: |
+            ./wrt/.ccache
+            ./wrt/staging_dir/host*
+            ./wrt/staging_dir/tool*
+
+      - name: Update Cache
+        if: env.RPI5_TEST != 'true'
+        run: |
+          if [ -d "./wrt/staging_dir" ]; then
+            find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r DIR; do
+              find "$DIR" -type f -exec touch {} +
+            done
+
+            mkdir -p ./wrt/tmp
+            echo "1" > ./wrt/tmp/.build
+            echo "toolchain skipped done!"
+          else
+            echo "cache missed!"
+          fi
+
+          if [[ "${{ steps.check-cache.outputs.cache-hit }}" != "true" ]]; then
+            CACHE_LIST=$(gh cache list --key "$WRT_CONFIG-$WRT_INFO" | cut -f 1)
+            for CACHE_KEY in $CACHE_LIST; do
+              gh cache delete "$CACHE_KEY" || true
+            done
+
+            echo "cache cleanup done!"
+          fi
+
+      - name: Update Feeds
+        run: |
+          cd ./wrt/
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Custom Packages
+        run: |
+          cd ./wrt/package/
+          $GITHUB_WORKSPACE/Scripts/Handles.sh
+
+      - name: Custom Settings
+        run: |
+          cd ./wrt/
+
+          cat "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" >> .config
+
+          $GITHUB_WORKSPACE/Scripts/Settings.sh
+
+          make defconfig -j$(nproc)
+
+      - name: Pre-Build Device Check
+        run: |
+          cd ./wrt/
+          TARGET_BOARD="$(grep -oP '^CONFIG_TARGET_BOARD="\K[^"]+' .config || true)"
+          TARGET_SUBTARGET="$(grep -oP '^CONFIG_TARGET_SUBTARGET="\K[^"]+' .config || true)"
+          TARGET_PROFILE="$(grep -oP '^CONFIG_TARGET_PROFILE="\K[^"]+' .config || true)"
+
+          echo "Selected Config : $WRT_CONFIG"
+          echo "Login IP        : $WRT_IP"
+          echo "Target Board    : $TARGET_BOARD"
+          echo "Target Subtarget: $TARGET_SUBTARGET"
+          echo "Target Profile  : $TARGET_PROFILE"
+          echo "Build Device    : ${TARGET_BOARD}/${TARGET_SUBTARGET}/${TARGET_PROFILE}"
+          echo ""
+
+          echo "Target Flags:"
+          grep -E '^CONFIG_TARGET_(x86|bcm27xx|qualcommax|mediatek|rockchip)' .config || true
+          echo ""
+
+          echo "Raspberry Pi Device:"
+          grep -E 'DEVICE_rpi|DEVICE_bcm27xx' .config || true
+          echo ""
+
+          echo "BUILD_DEVICE=${TARGET_BOARD}/${TARGET_SUBTARGET}/${TARGET_PROFILE}" >> $GITHUB_ENV
+
+          if grep -q '^CONFIG_TARGET_x86=y' .config; then
+            echo "ERROR: Wrong target detected! This build is x86, not Raspberry Pi 5."
+            exit 1
+          fi
+
+          if ! grep -q '^CONFIG_TARGET_bcm27xx_bcm2712_DEVICE_rpi-5=y' .config; then
+            echo "ERROR: Raspberry Pi 5 target not detected!"
+            exit 1
+          fi
+
+      - name: Download Packages
+        if: env.RPI5_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make download -j$(nproc)
+
+      - name: Compile Firmware
+        if: env.RPI5_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Show Build Output Device
+        run: |
+          cd ./wrt/
+          echo "Build Device : $BUILD_DEVICE"
+          echo "WRT Target   : $WRT_TARGET"
+          echo ""
+
+          echo "Output folders:"
+          find ./bin/targets/ -maxdepth 3 -type d 2>/dev/null || true
+
+          echo ""
+          echo "Firmware files:"
+          find ./bin/targets/ -type f 2>/dev/null || true
+
+      - name: Machine Information
+        run: |
+          cd ./wrt/
+          echo "======================="
+          lscpu | grep -E "name|Core|Thread" || true
+          echo "======================="
+          df -h
+          echo "======================="
+          du -h --max-depth=1
+          echo "======================="
+
+      - name: Package Firmware
+        run: |
+          cd ./wrt/
+          mkdir -p ./upload/
+
+          cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE".txt
+
+          if [[ "$RPI5_TEST" != "true" ]]; then
+            echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -n1)" >> $GITHUB_ENV
+            echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
+
+            find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
+
+            for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*"); do
+              EXT=$(basename "$FILE" | cut -d '.' -f 2-)
+              NAME=$(basename "$FILE" | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
+              NEW_FILE="$NAME"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_WIFI"-"$WRT_DATE"."$EXT"
+              mv -f "$FILE" ./upload/"$NEW_FILE"
+            done
+
+            find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+
+            make clean -j$(nproc)
+          fi
+
+      - name: Upload FULL BIN Artifact
+        if: env.RPI5_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RPI5-FULL-BIN
+          path: ./wrt/bin/
+          retention-days: 7
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: RPI5-UPLOAD
+          path: ./wrt/upload/
+          retention-days: 7
+
+      - name: Release Firmware
+        if: env.RPI5_TEST != 'true'
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: ${{ env.WRT_CONFIG }}-${{ env.WRT_INFO }}-${{ env.WRT_BRANCH }}-${{ env.WRT_DATE }}
+          files: ./wrt/upload/*.*
+          body: |
+            This is a Raspberry Pi 5 firmware package.
+            Please make sure to choose the correct firmware for your device.
+
+            Source: ${{ env.WRT_REPO }}
+            Branch: ${{ env.WRT_BRANCH }}
+            Commit: ${{ env.WRT_HASH }}
+            Config: ${{ env.WRT_CONFIG }}
+            Platform: ${{ env.WRT_TARGET }}
+            Build Device: ${{ env.BUILD_DEVICE }}
+            Login IP: ${{ env.WRT_IP }}
+            Kernel Version: ${{ env.WRT_KVER }}
