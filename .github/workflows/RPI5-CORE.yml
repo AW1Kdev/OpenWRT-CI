@@ -28,6 +28,7 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_PAT: ${{ secrets.GH_PAT }}
   WRT_CONFIG: ${{ inputs.WRT_CONFIG }}
   WRT_IP: ${{ inputs.WRT_IP }}
   WRT_REPO: ${{ inputs.WRT_REPO }}
@@ -81,8 +82,18 @@ jobs:
         run: |
           rm -rf ./wrt
 
-          REPO_URL="${WRT_REPO/https:\/\/github.com\//https:\/\/x-access-token:${{ secrets.GH_PAT }}@github.com/}"
+          if [ -z "$GH_PAT" ]; then
+            echo "ERROR: GH_PAT secret is empty or not set."
+            exit 1
+          fi
 
+          CLEAN_REPO="${WRT_REPO#https://github.com/}"
+          CLEAN_REPO="${CLEAN_REPO#http://github.com/}"
+          CLEAN_REPO="${CLEAN_REPO#github.com/}"
+
+          REPO_URL="https://x-access-token:${GH_PAT}@github.com/${CLEAN_REPO}"
+
+          echo "Cloning private repo..."
           git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$REPO_URL" ./wrt/
 
           cd ./wrt/
