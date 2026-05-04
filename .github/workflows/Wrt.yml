@@ -47,17 +47,28 @@ jobs:
 
         sudo apt-get autoremove -y --purge
         sudo apt-get clean -y
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+        df -h
 
     - name: Add Swap 8GB
       run: |
-        sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
+        sudo swapoff -a || true
+        sudo rm -f /swapfile || true
+
+        SWAPFILE="$RUNNER_TEMP/openwrt-swapfile"
+        sudo rm -f "$SWAPFILE"
+
+        sudo fallocate -l 8G "$SWAPFILE" || sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=8192
+        sudo chmod 600 "$SWAPFILE"
+        sudo mkswap "$SWAPFILE"
+        sudo swapon "$SWAPFILE"
+
+        free -h
+        swapon --show
 
     - name: Clone Private Repo DOTYPI5
       run: |
+        rm -rf wrt
         git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/AW1Kdev/DOTYPI5.git -b main wrt
 
     - name: Prepare Feeds
@@ -66,10 +77,40 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Normalize Scripts
+    - name: Normalize And Fix Executable Permissions
       run: |
         cd wrt
-        find ./ -type f \( -iname "*.sh" -o -iname "*.txt" \) -exec dos2unix {} \; -exec chmod +x {} \;
+
+        find ./ -type f \( \
+          -iname "*.sh" -o \
+          -iname "*.bash" -o \
+          -iname "*.zsh" -o \
+          -iname "*.py" -o \
+          -iname "*.pl" -o \
+          -iname "*.awk" -o \
+          -iname "*.sed" -o \
+          -iname "*.txt" \
+        \) -exec dos2unix {} \; || true
+
+        find ./ -type f \( \
+          -iname "*.sh" -o \
+          -iname "*.bash" -o \
+          -iname "*.zsh" -o \
+          -iname "*.py" -o \
+          -iname "*.pl" \
+        \) -exec chmod +x {} \; || true
+
+        find ./scripts ./include ./package ./feeds -type f \( \
+          -name "configure" -o \
+          -name "config.guess" -o \
+          -name "config.sub" -o \
+          -name "install-sh" -o \
+          -name "missing" -o \
+          -name "depcomp" \
+        \) -exec chmod +x {} \; 2>/dev/null || true
+
+        chmod +x ./scripts/* 2>/dev/null || true
+        chmod +x ./scripts/config/* 2>/dev/null || true
 
     - name: Load Config From Cloned Repo
       run: |
@@ -90,10 +131,11 @@ jobs:
         cd wrt
         echo "Selected LAN IP: $WRT_IP"
 
+        [ -f "package/base-files/files/bin/config_generate" ] && \
         sed -i "s/192\.168\.1\.1/$WRT_IP/g" package/base-files/files/bin/config_generate
 
         find ./feeds/luci/modules/luci-mod-system/ -type f -name "flash.js" \
-          -exec sed -i "s/192\.168\.1\.1/$WRT_IP/g" {} \;
+          -exec sed -i "s/192\.168\.1\.1/$WRT_IP/g" {} \; || true
 
         [ -f "./files/etc/config/network" ] && \
         sed -i "s/192\.168\.1\.1/$WRT_IP/g" ./files/etc/config/network
@@ -103,6 +145,9 @@ jobs:
         cd wrt
         echo "===== CONFIG TARGET ====="
         grep CONFIG_TARGET .config || true
+
+        echo "===== DEVICE PROFILE ====="
+        grep -E "DEVICE_rpi|bcm2712|bcm27xx" .config || true
 
     - name: Build Firmware
       run: |
