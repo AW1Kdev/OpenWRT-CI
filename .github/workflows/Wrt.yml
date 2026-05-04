@@ -1,0 +1,116 @@
+name: RPI5-BUILD
+
+on:
+  workflow_dispatch:
+    inputs:
+      WRT_IP:
+        description: "Select LAN IP address"
+        required: true
+        type: choice
+        default: "10.10.1.1"
+        options:
+          - 192.168.1.1
+          - 192.168.10.1
+          - 10.0.0.1
+          - 10.10.1.1
+          - 10.99.1.1
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Workflow Repo
+      uses: actions/checkout@v4
+
+    - name: Init Dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get update -y
+        sudo apt-get full-upgrade -y
+
+        sudo apt-get install -y \
+          ack antlr3 aria2 asciidoc autoconf automake autopoint \
+          binutils bison build-essential bzip2 ccache cmake cpio curl \
+          device-tree-compiler fastjar flex gawk gettext gcc-multilib \
+          g++-multilib git gperf haveged help2man intltool libc6-dev-i386 \
+          libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+          libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip \
+          p7zip-full patch pkgconf python3 python3-pip libpython3-dev \
+          qemu-utils rsync scons squashfs-tools subversion swig texinfo \
+          uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev dos2unix
+
+        sudo apt-get autoremove -y --purge
+        sudo apt-get clean -y
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+
+    - name: Add Swap 8GB
+      run: |
+        sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+
+    - name: Clone Private Repo DOTYPI5
+      run: |
+        git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/AW1Kdev/DOTYPI5.git -b main wrt
+
+    - name: Prepare Feeds
+      run: |
+        cd wrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Normalize Scripts
+      run: |
+        cd wrt
+        find ./ -type f \( -iname "*.sh" -o -iname "*.txt" \) -exec dos2unix {} \; -exec chmod +x {} \;
+
+    - name: Load Config From Cloned Repo
+      run: |
+        cd wrt
+
+        if [ ! -f "extra/RPI5M.config" ]; then
+          echo "ERROR: extra/RPI5M.config not found!"
+          exit 1
+        fi
+
+        cp -f extra/RPI5M.config .config
+        make defconfig
+
+    - name: Set Custom LAN IP
+      env:
+        WRT_IP: ${{ github.event.inputs.WRT_IP }}
+      run: |
+        cd wrt
+        echo "Selected LAN IP: $WRT_IP"
+
+        sed -i "s/192\.168\.1\.1/$WRT_IP/g" package/base-files/files/bin/config_generate
+
+        find ./feeds/luci/modules/luci-mod-system/ -type f -name "flash.js" \
+          -exec sed -i "s/192\.168\.1\.1/$WRT_IP/g" {} \;
+
+        [ -f "./files/etc/config/network" ] && \
+        sed -i "s/192\.168\.1\.1/$WRT_IP/g" ./files/etc/config/network
+
+    - name: Show Target Info
+      run: |
+        cd wrt
+        echo "===== CONFIG TARGET ====="
+        grep CONFIG_TARGET .config || true
+
+    - name: Build Firmware
+      run: |
+        cd wrt
+        make -j$(nproc) || make -j1 V=s
+
+    - name: Upload FULL BIN Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: RPI5M-${{ github.event.inputs.WRT_IP }}
+        path: wrt/bin/
