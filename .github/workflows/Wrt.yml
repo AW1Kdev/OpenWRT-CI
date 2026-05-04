@@ -116,12 +116,12 @@ jobs:
       run: |
         cd wrt
 
-        if [ ! -f "extra/RPI5M.config" ]; then
-          echo "ERROR: extra/RPI5M.config not found!"
+        if [ ! -f "extra/RPI5.config" ]; then
+          echo "ERROR: extra/RPI5.config not found!"
           exit 1
         fi
 
-        cp -f extra/RPI5M.config .config
+        cp -f extra/RPI5.config .config
         make defconfig
 
     - name: Set Custom LAN IP
