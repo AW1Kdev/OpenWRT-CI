@@ -25,6 +25,7 @@ on:
       WRT_PACKAGE:
         required: false
         type: string
+        default: ""
       RPI5_TEST:
         required: false
         type: boolean
@@ -92,13 +93,20 @@ jobs:
 
       - name: Initialize Values
         run: |
-          echo "WRT_DATE=$(TZ=Asia/Kuala_Lumpur date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
-          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
-          echo "WRT_INFO=${WRT_SOURCE%%/*}" >> $GITHUB_ENV
-          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
-          echo "WRT_KVER=none" >> $GITHUB_ENV
-          echo "WRT_LIST=none" >> $GITHUB_ENV
-          echo "BUILD_DEVICE=unknown" >> $GITHUB_ENV
+          echo "WRT_DATE=$(TZ=Asia/Kuala_Lumpur date +"%y.%m.%d-%H.%M.%S")" >> "$GITHUB_ENV"
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> "$GITHUB_ENV"
+          echo "WRT_INFO=${WRT_SOURCE%%/*}" >> "$GITHUB_ENV"
+
+          if [ -f "./Config/$WRT_CONFIG.txt" ]; then
+            TARGET_NAME="$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' "./Config/$WRT_CONFIG.txt" || true)"
+          else
+            TARGET_NAME="unknown"
+          fi
+
+          echo "WRT_TARGET=${TARGET_NAME:-unknown}" >> "$GITHUB_ENV"
+          echo "WRT_KVER=none" >> "$GITHUB_ENV"
+          echo "WRT_LIST=none" >> "$GITHUB_ENV"
+          echo "BUILD_DEVICE=unknown" >> "$GITHUB_ENV"
 
       - name: Clone Source Code
         run: |
@@ -119,7 +127,7 @@ jobs:
           git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$REPO_URL" ./wrt/
 
           cd ./wrt/
-          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> "$GITHUB_ENV"
 
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
           if [ -f "$PROJECT_MIRRORS_FILE" ]; then
@@ -128,7 +136,8 @@ jobs:
 
       - name: Normalize Scripts
         run: |
-          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
+          find ./ -type f \( -iname "*.txt" -o -iname "*.sh" \) -exec dos2unix {} \; || true
+          find ./ -type f \( -iname "*.sh" -o -path "*/Scripts/*" -o -path "*/scripts/*" \) -exec chmod +x {} \; || true
 
       - name: Check Cache
         id: check-cache
@@ -150,21 +159,29 @@ jobs:
       - name: Custom Packages
         run: |
           cd ./wrt/package/
-          $GITHUB_WORKSPACE/Scripts/Handles.sh
+          chmod +x "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+          "$GITHUB_WORKSPACE/Scripts/Handles.sh"
 
       - name: Custom Settings
         run: |
           cd ./wrt/
 
+          if [ ! -f "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" ]; then
+            echo "ERROR: Config file not found: $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt"
+            exit 1
+          fi
+
           cat "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" >> .config
 
-          $GITHUB_WORKSPACE/Scripts/Settings.sh
+          chmod +x "$GITHUB_WORKSPACE/Scripts/Settings.sh"
+          "$GITHUB_WORKSPACE/Scripts/Settings.sh"
 
-          make defconfig -j$(nproc)
+          make defconfig -j"$(nproc)"
 
       - name: Pre-Build Device Check
         run: |
           cd ./wrt/
+
           TARGET_BOARD="$(grep -oP '^CONFIG_TARGET_BOARD="\K[^"]+' .config || true)"
           TARGET_SUBTARGET="$(grep -oP '^CONFIG_TARGET_SUBTARGET="\K[^"]+' .config || true)"
           TARGET_PROFILE="$(grep -oP '^CONFIG_TARGET_PROFILE="\K[^"]+' .config || true)"
@@ -185,7 +202,7 @@ jobs:
           grep -E 'DEVICE_rpi|DEVICE_bcm27xx' .config || true
           echo ""
 
-          echo "BUILD_DEVICE=${TARGET_BOARD}/${TARGET_SUBTARGET}/${TARGET_PROFILE}" >> $GITHUB_ENV
+          echo "BUILD_DEVICE=${TARGET_BOARD}/${TARGET_SUBTARGET}/${TARGET_PROFILE}" >> "$GITHUB_ENV"
 
           if grep -q '^CONFIG_TARGET_x86=y' .config; then
             echo "ERROR: Wrong target detected! This build is x86, not Raspberry Pi 5."
@@ -201,7 +218,7 @@ jobs:
         if: env.RPI5_TEST != 'true'
         run: |
           cd ./wrt/
-          make download -j$(nproc)
+          make download -j"$(nproc)"
 
       - name: Clean Rust Host
         if: env.RPI5_TEST != 'true'
@@ -221,6 +238,7 @@ jobs:
       - name: Show Build Output Device
         run: |
           cd ./wrt/
+
           echo "Build Device : $BUILD_DEVICE"
           echo "WRT Target   : $WRT_TARGET"
           echo ""
@@ -246,28 +264,79 @@ jobs:
           echo "======================="
 
       - name: Package Firmware
+        shell: bash
         run: |
+          set -e
           cd ./wrt/
+
+          echo "== Package Firmware =="
           mkdir -p ./upload/
 
-          cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_DATE".txt
+          if [ -f ./.config ]; then
+            cp -f ./.config "./upload/Config-${WRT_CONFIG}-${WRT_DATE}.txt"
+          else
+            echo "WARNING: .config not found"
+          fi
 
-          if [[ "$RPI5_TEST" != "true" ]]; then
-            echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -n1)" >> $GITHUB_ENV
-            echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
+          if [ "$RPI5_TEST" = "true" ]; then
+            echo "TEST mode enabled. Skip firmware packaging."
+            echo "Upload folder:"
+            find ./upload/ -type f -maxdepth 1 -print || true
+            exit 0
+          fi
 
-            find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
+          if [ ! -d ./bin/targets ]; then
+            echo "ERROR: ./bin/targets not found."
+            echo "Firmware compile may have failed or no image was generated."
+            exit 1
+          fi
 
-            for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*"); do
-              EXT=$(basename "$FILE" | cut -d '.' -f 2-)
-              NAME=$(basename "$FILE" | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
-              NEW_FILE="$NAME"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE"."$EXT"
-              mv -f "$FILE" ./upload/"$NEW_FILE"
-            done
+          echo "Detected firmware output:"
+          find ./bin/targets/ -type f -print || true
+          echo ""
 
-            find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+          KVER="$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -h -oP '^kernel - \K[\d\.]+' {} \; | head -n1 || true)"
+          LIST="$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -h -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ' || true)"
 
-            make clean -j$(nproc)
+          echo "WRT_KVER=${KVER:-none}" >> "$GITHUB_ENV"
+          echo "WRT_LIST=${LIST:-none}" >> "$GITHUB_ENV"
+
+          echo "Copy important metadata files..."
+          find ./bin/targets/ -type f \( \
+            -name "config.buildinfo" -o \
+            -name "feeds.buildinfo" -o \
+            -name "version.buildinfo" -o \
+            -name "*.manifest" -o \
+            -name "profiles.json" -o \
+            -name "sha256sums" \
+          \) -exec cp -f {} ./upload/ \; || true
+
+          echo "Copy Raspberry Pi 5 firmware images..."
+          find ./bin/targets/ -type f \( \
+            -name "*rpi-5*factory*.img.gz" -o \
+            -name "*rpi-5*sysupgrade*.img.gz" -o \
+            -name "*rpi-5*.img.gz" \
+          \) -exec cp -f {} ./upload/ \; || true
+
+          echo "Copy other generated images if no rpi-5 image found..."
+          if ! find ./upload/ -type f -name "*rpi-5*.img.gz" | grep -q .; then
+            find ./bin/targets/ -type f \( \
+              -name "*.img.gz" -o \
+              -name "*.bin" -o \
+              -name "*.itb" -o \
+              -name "*.tar" -o \
+              -name "*.tar.gz" -o \
+              -name "*.tar.zst" \
+            \) -exec cp -f {} ./upload/ \; || true
+          fi
+
+          echo ""
+          echo "Final upload files:"
+          find ./upload/ -maxdepth 1 -type f -printf "%f\n" | sort || true
+
+          if ! find ./upload/ -maxdepth 1 -type f | grep -q .; then
+            echo "ERROR: Upload folder is empty."
+            exit 1
           fi
 
       - name: Upload To Artifact
