@@ -1,0 +1,239 @@
+name: RPI5-BUILD-FULL
+
+on:
+  workflow_dispatch:
+    inputs:
+      WRT_IP:
+        description: "Select LAN IP address"
+        required: true
+        type: choice
+        default: "10.10.1.1"
+        options:
+          - 192.168.1.1
+          - 192.168.10.1
+          - 10.0.0.1
+          - 10.10.1.1
+          - 10.99.1.1
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Workflow Repo
+      uses: actions/checkout@v4
+
+    - name: Init Dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get update -y
+        sudo apt-get full-upgrade -y
+
+        sudo apt-get install -y \
+          ack antlr3 aria2 asciidoc autoconf automake autopoint \
+          binutils bison build-essential bzip2 ccache cmake cpio curl \
+          device-tree-compiler fastjar flex gawk gettext gcc-multilib \
+          g++-multilib git gperf haveged help2man intltool libc6-dev-i386 \
+          libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+          libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip \
+          p7zip-full patch pkgconf python3 python3-pip libpython3-dev \
+          qemu-utils rsync scons squashfs-tools subversion swig texinfo \
+          uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev dos2unix
+
+        sudo apt-get autoremove -y --purge
+        sudo apt-get clean -y
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+        df -h
+
+    - name: Add Swap 8GB
+      run: |
+        sudo swapoff -a || true
+        sudo rm -f /swapfile || true
+
+        SWAPFILE="$RUNNER_TEMP/openwrt-swapfile"
+        sudo rm -f "$SWAPFILE"
+
+        sudo fallocate -l 8G "$SWAPFILE" || sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=8192
+        sudo chmod 600 "$SWAPFILE"
+        sudo mkswap "$SWAPFILE"
+        sudo swapon "$SWAPFILE"
+
+        free -h
+        swapon --show
+
+    - name: Clone Private Repo DOTYPI5
+      run: |
+        rm -rf wrt
+        git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/AW1Kdev/DOTYPI5.git -b main wrt
+
+    - name: Prepare Feeds
+      run: |
+        cd wrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Normalize And Fix Executable Permissions
+      run: |
+        cd wrt
+
+        find ./ -type f \( \
+          -iname "*.sh" -o \
+          -iname "*.bash" -o \
+          -iname "*.zsh" -o \
+          -iname "*.py" -o \
+          -iname "*.pl" -o \
+          -iname "*.awk" -o \
+          -iname "*.sed" -o \
+          -iname "*.txt" \
+        \) -exec dos2unix {} \; || true
+
+        find ./ -type f \( \
+          -iname "*.sh" -o \
+          -iname "*.bash" -o \
+          -iname "*.zsh" -o \
+          -iname "*.py" -o \
+          -iname "*.pl" \
+        \) -exec chmod +x {} \; || true
+
+        find ./scripts ./include ./package ./feeds -type f \( \
+          -name "configure" -o \
+          -name "config.guess" -o \
+          -name "config.sub" -o \
+          -name "install-sh" -o \
+          -name "missing" -o \
+          -name "depcomp" \
+        \) -exec chmod +x {} \; 2>/dev/null || true
+
+        chmod +x ./scripts/* 2>/dev/null || true
+        chmod +x ./scripts/config/* 2>/dev/null || true
+
+    - name: Load Config From Cloned Repo
+      run: |
+        cd wrt
+
+        if [ ! -f "extra/RPI5.config" ]; then
+          echo "ERROR: extra/RPI5.config not found!"
+          exit 1
+        fi
+
+        cp -f extra/RPI5.config .config
+        make defconfig
+
+    - name: Set Custom LAN IP
+      env:
+        WRT_IP: ${{ github.event.inputs.WRT_IP }}
+      run: |
+        cd wrt
+        echo "Selected LAN IP: $WRT_IP"
+
+        [ -f "package/base-files/files/bin/config_generate" ] && \
+        sed -i "s/192\.168\.1\.1/$WRT_IP/g" package/base-files/files/bin/config_generate
+
+        find ./feeds/luci/modules/luci-mod-system/ -type f -name "flash.js" \
+          -exec sed -i "s/192\.168\.1\.1/$WRT_IP/g" {} \; || true
+
+        [ -f "./files/etc/config/network" ] && \
+        sed -i "s/192\.168\.1\.1/$WRT_IP/g" ./files/etc/config/network
+
+    - name: Preview And Check LAN IP
+      env:
+        WRT_IP: ${{ github.event.inputs.WRT_IP }}
+      run: |
+        cd wrt
+
+        echo "===== SELECTED LAN IP ====="
+        echo "$WRT_IP"
+
+        echo ""
+        echo "===== CHECK config_generate ====="
+        if [ -f "package/base-files/files/bin/config_generate" ]; then
+          grep -n "$WRT_IP\|192\.168\.1\.1" package/base-files/files/bin/config_generate || true
+        else
+          echo "config_generate not found"
+        fi
+
+        echo ""
+        echo "===== CHECK files/etc/config/network ====="
+        if [ -f "files/etc/config/network" ]; then
+          grep -n "$WRT_IP\|192\.168\.1\.1" files/etc/config/network || true
+        else
+          echo "files/etc/config/network not found"
+        fi
+
+        echo ""
+        echo "===== CHECK LuCI flash.js ====="
+        find ./feeds/luci/modules/luci-mod-system/ -type f -name "flash.js" \
+          -exec grep -nH "$WRT_IP\|192\.168\.1\.1" {} \; || true
+
+    - name: Show Target Info
+      run: |
+        cd wrt
+        echo "===== CONFIG TARGET ====="
+        grep CONFIG_TARGET .config || true
+
+        echo "===== DEVICE PROFILE ====="
+        grep -E "DEVICE_rpi|bcm2712|bcm27xx" .config || true
+
+    - name: Build Firmware
+      run: |
+        cd wrt
+        make -j$(nproc) || make -j1 V=s
+
+    - name: Upload FULL BIN Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: RPI5-${{ github.event.inputs.WRT_IP }}
+        path: wrt/bin/
+
+    - name: Prepare Release Files Selected Only
+      run: |
+        cd wrt
+
+        RELEASE_DIR="../release"
+        mkdir -p "$RELEASE_DIR"
+
+        TARGET_DIR="bin/targets/bcm27xx/bcm2712"
+
+        cp -f "$TARGET_DIR/config.buildinfo" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/feeds.buildinfo" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/version.buildinfo" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/profiles.json" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/sha256sums" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/immortalwrt-bcm27xx-bcm2712-rpi-5.manifest" "$RELEASE_DIR/" || true
+
+        cp -f "$TARGET_DIR/immortalwrt-bcm27xx-bcm2712-rpi-5-ext4-factory.img.gz" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/immortalwrt-bcm27xx-bcm2712-rpi-5-ext4-sysupgrade.img.gz" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/immortalwrt-bcm27xx-bcm2712-rpi-5-squashfs-factory.img.gz" "$RELEASE_DIR/" || true
+        cp -f "$TARGET_DIR/immortalwrt-bcm27xx-bcm2712-rpi-5-squashfs-sysupgrade.img.gz" "$RELEASE_DIR/" || true
+
+        echo "===== RELEASE FILES ====="
+        ls -lh "$RELEASE_DIR"
+
+    - name: Generate Release Tag
+      id: tag
+      run: |
+        DATE_TAG="$(date +'%Y.%m.%d')"
+        SAFE_IP="$(echo '${{ github.event.inputs.WRT_IP }}' | tr '.' '-')"
+        TAG_NAME="RPI5-${DATE_TAG}-${SAFE_IP}-${{ github.run_number }}"
+
+        echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+        echo "release_name=RPI5 Build $DATE_TAG IP ${{ github.event.inputs.WRT_IP }}" >> "$GITHUB_OUTPUT"
+
+    - name: Upload To GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag_name }}
+        name: ${{ steps.tag.outputs.release_name }}
+        body: |
+          RPI5 firmware build
+
+          LAN IP: ${{ github.event.inputs.WRT_IP }}
+          Run: ${{ github.run_number }}
+        files: release/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
